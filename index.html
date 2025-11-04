@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEC Share Data Viewer</title>
+    <style>
+        :root {
+            --background-color: #f4f7f6;
+            --card-background: #ffffff;
+            --text-color: #333;
+            --primary-color: #005a9c;
+            --border-color: #e0e0e0;
+            --shadow-color: rgba(0, 0, 0, 0.1);
+            --success-color: #28a745;
+            --error-color: #dc3545;
+            --loading-color: #6c757d;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: var(--card-background);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--shadow-color);
+            border: 1px solid var(--border-color);
+            padding: 2rem;
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+        }
+        h1 {
+            color: var(--primary-color);
+            margin-top: 0;
+            font-size: 1.75rem;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .data-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            text-align: left;
+            margin-top: 1rem;
+        }
+        .data-point {
+            background-color: var(--background-color);
+            padding: 1rem;
+            border-radius: 6px;
+        }
+        .data-point .label {
+            font-weight: 600;
+            color: #555;
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        .data-point .value {
+            font-size: 1.25rem;
+            font-weight: 300;
+            color: var(--primary-color);
+            word-wrap: break-word;
+        }
+        #status {
+            margin-top: 2rem;
+            padding: 0.75rem;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        .loading {
+            background-color: #e9ecef;
+            color: var(--loading-color);
+        }
+        .success {
+            background-color: #d4edda;
+            color: var(--success-color);
+        }
+        .error {
+            background-color: #f8d7da;
+            color: var(--error-color);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1 id="companyName">Loading Company Data...</h1>
+        <div class="data-grid">
+            <div class="data-point">
+                <span class="label">CIK</span>
+                <span class="value" id="cik"></span>
+            </div>
+            <div class="data-point">
+                <span class="label">Shares Outstanding (Post-2020)</span>
+                <span class="value">Min / Max</span>
+            </div>
+            <div class="data-point">
+                <span class="label">Minimum Shares</span>
+                <span class="value" id="minShares">--</span>
+            </div>
+            <div class="data-point">
+                <span class="label">Maximum Shares</span>
+                <span class="value" id="maxShares">--</span>
+            </div>
+        </div>
+        <div id="status" class="loading">Initializing...</div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const CIK = '0000813672';
+            const API_URL = `https://data.sec.gov/api/xbrl/companyfacts/CIK${CIK}.json`;
+
+            const companyNameEl = document.getElementById('companyName');
+            const cikEl = document.getElementById('cik');
+            const minSharesEl = document.getElementById('minShares');
+            const maxSharesEl = document.getElementById('maxShares');
+            const statusEl = document.getElementById('status');
+
+            const fetchCompanyData = async () => {
+                setStatus('Fetching data from SEC...', 'loading');
+                cikEl.textContent = CIK;
+
+                try {
+                    // SEC API requires a custom User-Agent header.
+                    const response = await fetch(API_URL, {
+                        headers: {
+                            'User-Agent': 'Company Name admin@company.com',
+                            'Accept-Encoding': 'gzip, deflate',
+                            'Host': 'data.sec.gov'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    companyNameEl.textContent = data.entityName;
+
+                    // Locate the shares outstanding data
+                    const sharesData = data.facts['us-gaap']?.EntityCommonStockSharesOutstanding?.units?.shares;
+                    if (!sharesData || sharesData.length === 0) {
+                        throw new Error('Shares outstanding data not found in the response.');
+                    }
+
+                    // Filter for data after 2020
+                    const post2020Data = sharesData.filter(entry => {
+                        const entryYear = new Date(entry.end).getFullYear();
+                        return entryYear > 2020;
+                    });
+
+                    if (post2020Data.length === 0) {
+                        throw new Error('No shares data found for the period after 2020.');
+                    }
+
+                    // Compute min and max
+                    const shareValues = post2020Data.map(entry => entry.val);
+                    const minShares = Math.min(...shareValues);
+                    const maxShares = Math.max(...shareValues);
+
+                    // Render the results
+                    minSharesEl.textContent = minShares.toLocaleString();
+                    maxSharesEl.textContent = maxShares.toLocaleString();
+                    setStatus('Data processed successfully.', 'success');
+
+                } catch (error) {
+                    console.error('Failed to fetch or process data:', error);
+                    setStatus(`Error: ${error.message}`, 'error');
+                    minSharesEl.textContent = 'Error';
+                    maxSharesEl.textContent = 'Error';
+                }
+            };
+
+            const setStatus = (message, type) => {
+                statusEl.textContent = message;
+                statusEl.className = type; // 'loading', 'success', or 'error'
+            };
+
+            fetchCompanyData();
+        });
+    </script>
+
+</body>
+</html>
